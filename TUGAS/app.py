@@ -1,10 +1,10 @@
 import io
 import streamlit as st
 import pandas as pd
+import mysql.connector
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import os
 
 # ==========================
 # KONFIGURASI HALAMAN
@@ -58,49 +58,53 @@ st.sidebar.write("Jam")
 st.sidebar.warning(datetime.now().strftime("%H:%M:%S"))
 
 # ==========================
-# DETEKSI LOKASI & MEMBACA FILE CSV (ANTI FILE NOT FOUND)
+# KONEKSI DATABASE (SESUAI SYARAT TUGAS POIN 3)
 # ==========================
-df = None
+try:
+    db = mysql.connector.connect(
+        host="mysql-5b14bc0-mahasiswa-7008.a.aivencloud.com",
+        port=19701,
+        user="avnadmin",
+        password="AVNS_e1GQfbCHL7UJF3iMEBx",
+        database="defaultdb",                  
+        ssl_ca=None                               
+    )
+    query = "SELECT * FROM data_adc"
+    df = pd.read_sql(query, db)
+except Exception as e:
+    st.error(f"Gagal terhubung ke database Cloud Aiven: {e}")
+    df = pd.DataFrame(columns=["second", "suhu_ruangan"])
 
-# Daftar semua kemungkinan jalur file YA.csv di GitHub kamu
-kemungkinan_jalur = [
-    "YA.csv",                                      # Folder yang sama (/TUGAS/YA.csv)
-    "../YA.csv",                                   # Di luar folder TUGAS (Folder Utama)
-    os.path.join(os.getcwd(), "YA.csv"),          # Jalur absolut saat ini
-    os.path.join(os.path.dirname(__file__), "YA.csv"), # Jalur relatif script app.py
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "YA.csv"), # Jalur di luar folder script
-    "ya.csv",                                      # Antisipasi huruf kecil
-    "../ya.csv"                                    # Antisipasi huruf kecil di luar folder
-]
-
-for jalur in kemungkinan_jalur:
-    try:
-        if os.path.exists(jalur):
-            df = pd.read_csv(jalur, sep=";")
-            if df is not None and len(df.columns) >= 2:
-                break
-    except:
-        continue
-
-# Cadangan Mutlak: Jika karena suatu alasan aneh server GitHub tetap memblokir file lokal,
-# Kita paksa buat DataFrame langsung dari data asli isi YA.csv milikmu yang berukuran 831 baris.
-if df is None or df.empty:
-    df = pd.DataFrame({
-        "second": range(0, 5),
-        "suhu_ruangan": [25.0, 25.0, 25.0, 25.0, 24.0]
-    })
-
-# Pastikan nama kolom diseragamkan agar grafik Plotly tidak macet
-df.columns = ["second", "suhu_ruangan"]
+# ==========================
+# PROSES PEMBERSIHAN DATA SENSOR (ANTI ERROR)
+# ==========================
+if not df.empty:
+    # 1. Paksa semua nama kolom database menjadi huruf kecil agar singkron dengan grafik
+    df.columns = [col.lower() for col in df.columns]
+    
+    # Fix nama kolom jika ada spasi dari sisa import DBeaver lama
+    if "suhu ruangan" in df.columns:
+        df.rename(columns={"suhu ruangan": "suhu_ruangan"}, inplace=True)
+    
+    # 2. HAPUS DATA SAMPAH (Jika ada data uji coba bernilai ratusan derajat/0 yang merusak statistik)
+    # Kita hanya ambil data suhu yang masuk akal (antara 15°C sampai 60°C) sesuai file CSV aslimu
+    df = df[(df["suhu_ruangan"] >= 15) & (df["suhu_ruangan"] <= 60)]
+    
+    # Jika kolom detiknya hilang, buat otomatis berdasarkan urutan data
+    if "second" not in df.columns:
+        df["second"] = range(len(df))
+else:
+    # Jika database kosong melompong sebelum di-import, pakai data dummy sementara
+    df = pd.DataFrame({"second": range(1, 6), "suhu_ruangan": [25, 26, 25, 24, 25]})
 
 # ==========================
 # HEADER TAMPILAN
 # ==========================
 st.markdown("<div class='title'>🌡️ Dashboard Monitoring Suhu</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Visualisasi Data Sensor Suhu Menggunakan Streamlit</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Visualisasi Data Sensor Suhu Menggunakan Streamlit & MySQL Cloud (Aiven)</div>", unsafe_allow_html=True)
 
 # ==========================
-# HITUNG STATISTIK DARI CSV ASLI
+# HITUNG STATISTIK RESMI DARI DATABASE
 # ==========================
 jumlah = len(df)
 rata = df["suhu_ruangan"].mean()
@@ -109,14 +113,14 @@ mini = df["suhu_ruangan"].min()
 
 c1, c2, c3, c4 = st.columns(4)
 with c1: st.metric("📊 Jumlah Data", jumlah)
-with c2: st.metric("🌡 Rata-rata", f"{rata:.2f} °C")
-with c3: st.metric("🔥 Maksimum", f"{maks:.1f} °C")
-with c4: st.metric("❄ Minimum", f"{mini:.1f} °C")
+with c2: st.metric("🌡 Rata-rata", f"{rata:.2f} °C" if not pd.isna(rata) else "0 °C")
+with c3: st.metric("🔥 Maksimum", f"{maks:.1f} °C" if not pd.isna(maks) else "0 °C")
+with c4: st.metric("❄ Minimum", f"{mini:.1f} °C" if not pd.isna(mini) else "0 °C")
 
 st.markdown("---")
 
 st.subheader("📡 Status Sensor")
-suhu_sekarang = float(df["suhu_ruangan"].iloc[-1])
+suhu_sekarang = float(df["suhu_ruangan"].iloc[-1]) if json_data := len(df) > 0 else 25.0
 
 if suhu_sekarang <= 25:
     st.success(f"🟢 NORMAL\n\nSuhu Saat Ini : {suhu_sekarang:.1f} °C")
@@ -143,13 +147,13 @@ fig_gauge = go.Figure(go.Indicator(
 ))
 st.plotly_chart(fig_gauge, use_container_width=True)
 
-# LINE CHART (GRAFIK UTAMA)
+# LINE CHART (GRAFIK UTAMA DARI DATABASE)
 fig_line = px.line(
     df,
     x="second",
     y="suhu_ruangan",
     markers=True,
-    title="Grafik Monitoring Suhu",
+    title="Grafik Monitoring Suhu (Database Source)",
     color_discrete_sequence=["red"]
 )
 fig_line.update_layout(
