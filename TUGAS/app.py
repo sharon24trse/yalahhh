@@ -109,22 +109,39 @@ st.sidebar.write("Jam")
 st.sidebar.warning(datetime.now().strftime("%H:%M:%S"))
 
 # ==========================
-# KONEKSI DATABASE
+# KONEKSI DATABASE & FAILSAFE CSV
 # ==========================
 
-db = mysql.connector.connect(
-    host="mysql-5b14bc0-mahasiswa-7008.a.aivencloud.com",
-    port=19701,
-    user="avnadmin",
-    password="AVNS_e1GQfbCHL7UJF3iMEBx",  # Masukkan password asli dari Aiven
-    database="defaultdb",                     # Atau ganti nama database yang kamu buat di Aiven
-    ssl_ca=None                               # Tambahkan ini jika Aiven meminta SSL wajib
-)
+try:
+    db = mysql.connector.connect(
+        host="mysql-5b14bc0-mahasiswa-7008.a.aivencloud.com",
+        port=19701,
+        user="avnadmin",
+        password="AVNS_e1GQfbCHL7UJF3iMEBx",  # Password asli dari Aiven
+        database="defaultdb",                  
+        ssl_ca=None                               
+    )
+    query="SELECT * FROM data_adc"
+    df=pd.read_sql(query,db)
+except:
+    df = pd.DataFrame()
 
+# JIKA DATABASE KOSONG / ERROR, LANGSUNG BACA FILE YA.csv DI GITHUB
+if df.empty or len(df) <= 1:
+    try:
+        df = pd.read_csv("YA.csv", sep=";")
+        df.columns = ["second", "suhu_ruangan"]
+    except:
+        # Cadangan kalau nama file kamu huruf kecil semua di github
+        df = pd.read_csv("ya.csv", sep=";")
+        df.columns = ["second", "suhu_ruangan"]
 
-query="SELECT * FROM data_adc"
-
-df=pd.read_sql(query,db)
+# Menjamin nama kolom huruf kecil agar grafik tidak error broken
+df.columns = [col.lower() for col in df.columns]
+if "suhu ruangan" in df.columns:
+    df.rename(columns={"suhu ruangan": "suhu_ruangan"}, inplace=True)
+elif "second" not in df.columns and len(df.columns) >= 2:
+    df.columns = ["second", "suhu_ruangan"]
 
 # ==========================
 # HEADER
