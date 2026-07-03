@@ -58,7 +58,7 @@ st.sidebar.write("Jam")
 st.sidebar.warning(datetime.now().strftime("%H:%M:%S"))
 
 # ==========================
-# KONEKSI DATABASE (SESUAI SYARAT TUGAS POIN 3)
+# KONEKSI DATABASE & SINKRONISASI DATA CSV
 # ==========================
 try:
     db = mysql.connector.connect(
@@ -76,25 +76,32 @@ except Exception as e:
     df = pd.DataFrame(columns=["second", "suhu_ruangan"])
 
 # ==========================
-# PROSES PEMBERSIHAN DATA SENSOR (ANTI ERROR)
+# PROSES PENYUSUNAN & PEMBERSIHAN DATA AGAR SINKRON 100%
 # ==========================
 if not df.empty:
-    # 1. Paksa semua nama kolom database menjadi huruf kecil agar singkron dengan grafik
+    # 1. Seragamkan nama kolom database menjadi huruf kecil
     df.columns = [col.lower() for col in df.columns]
     
-    # Fix nama kolom jika ada spasi dari sisa import DBeaver lama
+    # Perbaiki jika nama kolom di DB mendadak mengandung spasi dari DBeaver
     if "suhu ruangan" in df.columns:
         df.rename(columns={"suhu ruangan": "suhu_ruangan"}, inplace=True)
-    
-    # 2. FILTER DATA: Mengamankan data agar hanya menampilkan suhu normal (15°C sampai 60°C)
+    if "second" not in df.columns and len(df.columns) >= 2:
+        # Jika kolom pertama bukan bernama 'second', paksa ganti namanya secara urut
+        df.columns = ["second", "suhu_ruangan"]
+
+    # 2. HAPUS DATA DOUBLE / SAMPAH YANG MEMBUAT DATA MEMBENGKAK
+    # Kita bersihkan nilai suhu yang di luar nalar (hanya ambil 15°C s.d 60°C sesuai file CSV asli Sharon)
     df = df[(df["suhu_ruangan"] >= 15) & (df["suhu_ruangan"] <= 60)]
     
-    # Jika kolom detiknya hilang, buat otomatis berdasarkan urutan data
-    if "second" not in df.columns:
-        df["second"] = range(len(df))
+    # Hapus baris yang duplikat pada detiknya agar jumlah datanya presisi pas seperti CSV asli (sekitar 831 baris)
+    df = df.drop_duplicates(subset=["second"])
+    
+    # 3. URUTKAN DATA BERDASARKAN DETIK (Agar grafik tersusun rapi tidak zigzag/lompat-lompat)
+    df["second"] = pd.to_numeric(df["second"])
+    df = df.sort_values(by="second").reset_index(drop=True)
 else:
-    # Jika database kosong melompong sebelum di-import, pakai data dummy sementara
-    df = pd.DataFrame({"second": range(1, 6), "suhu_ruangan": [25, 26, 25, 24, 25]})
+    # Jika database kosong melompong, pakai data dummy terstruktur
+    df = pd.DataFrame({"second": range(0, 10), "suhu_ruangan": [25, 25, 25, 25, 24, 26, 25, 25, 24, 25]})
 
 # ==========================
 # HEADER TAMPILAN
@@ -103,7 +110,7 @@ st.markdown("<div class='title'>🌡️ Dashboard Monitoring Suhu</div>", unsafe
 st.markdown("<div class='subtitle'>Visualisasi Data Sensor Suhu Menggunakan Streamlit & MySQL Cloud (Aiven)</div>", unsafe_allow_html=True)
 
 # ==========================
-# HITUNG STATISTIK RESMI DARI DATABASE
+# HITUNG STATISTIK RESMI
 # ==========================
 jumlah = len(df)
 rata = df["suhu_ruangan"].mean()
@@ -119,7 +126,6 @@ with c4: st.metric("❄ Minimum", f"{mini:.1f} °C" if not pd.isna(mini) else "0
 st.markdown("---")
 
 st.subheader("📡 Status Sensor")
-# Mengambil suhu paling terakhir dengan aman tanpa memicu NameError lagi
 if len(df) > 0:
     suhu_sekarang = float(df["suhu_ruangan"].iloc[-1])
 else:
@@ -150,19 +156,24 @@ fig_gauge = go.Figure(go.Indicator(
 ))
 st.plotly_chart(fig_gauge, use_container_width=True)
 
-# LINE CHART (GRAFIK UTAMA DARI DATABASE)
+# ==========================
+# PERBAIKAN GRAFIK UTAMA (LINE CHART BERGARIS RAPI)
+# ==========================
 fig_line = px.line(
     df,
     x="second",
     y="suhu_ruangan",
     markers=True,
     title="Grafik Monitoring Suhu (Database Source)",
-    color_discrete_sequence=["red"]
+    labels={"second": "Detik (Second)", "suhu_ruangan": "Suhu (°C)"},
+    color_discrete_sequence=["#FF4B4B"]
 )
 fig_line.update_layout(
     paper_bgcolor="white",
-    plot_bgcolor="white",
-    font=dict(size=16)
+    plot_bgcolor="#F8F9FA",
+    xaxis=dict(showgrid=True, gridcolor="#E2E8F0"),
+    yaxis=dict(showgrid=True, gridcolor="#E2E8F0"),
+    font=dict(size=14)
 )
 st.plotly_chart(fig_line, use_container_width=True)
 
@@ -171,14 +182,25 @@ st.info("💡 Kamu bisa mengunduh Grafik PNG secara instan langsung dengan mengk
 
 st.markdown("---")
 
-# BAR CHART
-st.subheader("📊 Grafik Batang")
+# ==========================
+# PERBAIKAN GRAFIK BATANG (BAR CHART TERSTRUKTUR)
+# ==========================
+st.subheader("📊 Grafik Batang (20 Data Terakhir)")
+# Mengambil 20 data terakhir secara urut agar tidak menumpuk padat
+df_bar = df.tail(20)
 bar = px.bar(
-    df.tail(20),
+    df_bar,
     x="second",
     y="suhu_ruangan",
     color="suhu_ruangan",
-    color_continuous_scale="Turbo"
+    labels={"second": "Detik (Second)", "suhu_ruangan": "Suhu (°C)"},
+    color_continuous_scale="Turbo",
+    title="Tren Perubahan 20 Data Suhu Terakhir"
+)
+bar.update_layout(
+    paper_bgcolor="white",
+    plot_bgcolor="#F8F9FA",
+    xaxis=dict(type='category') # Paksa format sumbu X berbentuk kategori urut per detik
 )
 st.plotly_chart(bar, use_container_width=True)
 
@@ -196,15 +218,20 @@ st.plotly_chart(fig_pie, use_container_width=True)
 
 st.markdown("---")
 
-# DATA TABLE & CSV DOWNLOAD
-st.subheader("📋 Data Sensor")
-st.dataframe(df, use_container_width=True, height=350)
+# ==========================
+# PERBAIKAN DATA SENSOR (TABEL INTERAKTIF BERSIH)
+# ==========================
+st.subheader("📋 Data Sensor Terstruktur")
+# Menampilkan tabel dengan penamaan kolom formal kapital yang rapi bagi Dosen
+df_tampil = df.copy()
+df_tampil.columns = ["Second (Detik)", "Suhu Ruangan (°C)"]
+st.dataframe(df_tampil, use_container_width=True, height=350)
 
-csv = df.to_csv(index=False)
+csv = df_tampil.to_csv(index=False)
 st.download_button(
     "⬇ Download CSV",
     csv,
-    "Data_Suhu.csv",
+    "Data_Suhu_Clean.csv",
     "text/csv"
 )
 
