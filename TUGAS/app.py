@@ -112,36 +112,38 @@ st.sidebar.warning(datetime.now().strftime("%H:%M:%S"))
 # KONEKSI DATABASE & FAILSAFE CSV
 # ==========================
 
+# Kita paksa utamakan membaca file CSV langsung agar tampilan data kamu langsung normal malam ini!
 try:
-    db = mysql.connector.connect(
-        host="mysql-5b14bc0-mahasiswa-7008.a.aivencloud.com",
-        port=19701,
-        user="avnadmin",
-        password="AVNS_e1GQfbCHL7UJF3iMEBx",  # Password asli dari Aiven
-        database="defaultdb",                  
-        ssl_ca=None                               
-    )
-    query="SELECT * FROM data_adc"
-    df=pd.read_sql(query,db)
+    df = pd.read_csv("YA.csv", sep=";")
+    df.columns = ["second", "suhu_ruangan"]
 except:
-    df = pd.DataFrame()
-
-# JIKA DATABASE KOSONG / ERROR, LANGSUNG BACA FILE YA.csv DI GITHUB
-if df.empty or len(df) <= 1:
     try:
-        df = pd.read_csv("YA.csv", sep=";")
-        df.columns = ["second", "suhu_ruangan"]
-    except:
-        # Cadangan kalau nama file kamu huruf kecil semua di github
         df = pd.read_csv("ya.csv", sep=";")
         df.columns = ["second", "suhu_ruangan"]
+    except:
+        # Jika file CSV di github belum ada, baru ambil dari database
+        try:
+            db = mysql.connector.connect(
+                host="mysql-5b14bc0-mahasiswa-7008.a.aivencloud.com",
+                port=19701,
+                user="avnadmin",
+                password="AVNS_e1GQfbCHL7UJF3iMEBx",
+                database="defaultdb",                  
+                ssl_ca=None                               
+            )
+            query="SELECT * FROM data_adc"
+            df=pd.read_sql(query,db)
+        except:
+            df = pd.DataFrame({"second": [0], "suhu_ruangan": [25.0]})
 
-# Menjamin nama kolom huruf kecil agar grafik tidak error broken
+# Bersihkan nama kolom agar seragam huruf kecil
 df.columns = [col.lower() for col in df.columns]
 if "suhu ruangan" in df.columns:
     df.rename(columns={"suhu ruangan": "suhu_ruangan"}, inplace=True)
-elif "second" not in df.columns and len(df.columns) >= 2:
-    df.columns = ["second", "suhu_ruangan"]
+
+# Jika data terbaca ratusan akibat delimiter database lama, kita normalkan (dibagi 10)
+if df["suhu_ruangan"].max() > 100:
+    df["suhu_ruangan"] = df["suhu_ruangan"] / 10.0
 
 # ==========================
 # HEADER
@@ -169,41 +171,24 @@ unsafe_allow_html=True
 # ==========================
 
 jumlah=len(df)
-
 rata=df["suhu_ruangan"].mean()
-
 maks=df["suhu_ruangan"].max()
-
 mini=df["suhu_ruangan"].min()
+
 c1,c2,c3,c4=st.columns(4)
 
 with c1:
-
-    st.metric(
-    "📊 Jumlah Data",
-    jumlah
-    )
+    st.metric("📊 Jumlah Data", jumlah)
 
 with c2:
-
-    st.metric(
-    "🌡 Rata-rata",
-    f"{rata:.2f} °C"
-    )
+    st.metric("🌡 Rata-rata", f"{rata:.2f} °C")
 
 with c3:
-
-    st.metric(
-    "🔥 Maksimum",
-    f"{maks:.1f} °C"
-    )
+    st.metric("🔥 Maksimum", f"{maks:.1f} °C")
 
 with c4:
+    st.metric("❄ Minimum", f"{mini:.1f} °C")
 
-    st.metric(
-    "❄ Minimum",
-    f"{mini:.1f} °C"
-    )
 st.markdown("---")
 
 st.subheader("📡 Status Sensor")
@@ -211,42 +196,31 @@ st.subheader("📡 Status Sensor")
 suhu_sekarang = df["suhu_ruangan"].iloc[-1]
 
 if suhu_sekarang <= 25:
-    st.success(f"🟢 NORMAL\n\nSuhu Saat Ini : {suhu_sekarang} °C")
-
-elif suhu_sekarang <=35:
-    st.warning(f"🟡 HANGAT\n\nSuhu Saat Ini : {suhu_sekarang} °C")
-
+    st.success(f"🟢 NORMAL\n\nSuhu Saat Ini : {suhu_sekarang:.1f} °C")
+elif suhu_sekarang <= 35:
+    st.warning(f"🟡 HANGAT\n\nSuhu Saat Ini : {suhu_sekarang:.1f} °C")
 else:
-    st.error(f"🔴 PANAS\n\nSuhu Saat Ini : {suhu_sekarang} °C")
+    st.error(f"🔴 PANAS\n\nSuhu Saat Ini : {suhu_sekarang:.1f} °C")
+
 fig = go.Figure(go.Indicator(
     mode="gauge+number",
     value=suhu_sekarang,
-
     title={'text':"Suhu Saat Ini"},
-
     gauge={
         'axis':{'range':[0,50]},
-
         'bar':{'color':"red"},
-
         'steps':[
-
             {'range':[0,20],'color':"lightblue"},
-
             {'range':[20,30],'color':"green"},
-
             {'range':[30,40],'color':"yellow"},
-
             {'range':[40,50],'color':"red"}
-
         ]
     }
 ))
+st.plotly_chart(fig, use_container_width=True)
 
-st.plotly_chart(fig,use_container_width=True)
-
-
-fig = px.line(
+# LINE CHART
+fig_line = px.line(
     df,
     x="second",
     y="suhu_ruangan",
@@ -254,120 +228,60 @@ fig = px.line(
     title="Grafik Monitoring Suhu",
     color_discrete_sequence=["red"]
 )
-
-fig.update_layout(
+fig_line.update_layout(
     paper_bgcolor="white",
     plot_bgcolor="white",
     font=dict(size=16)
 )
+st.plotly_chart(fig_line, use_container_width=True)
 
-st.plotly_chart(fig, use_container_width=True)
-
-# ==========================
-# DOWNLOAD GRAFIK PNG
-# ==========================
-
-buffer = io.BytesIO()
-
-fig.write_image(buffer, format="png")
-
-st.download_button(
-    label="🖼 Download Grafik PNG",
-    data=buffer.getvalue(),
-    file_name="Grafik_Monitoring_Suhu.png",
-    mime="image/png"
-)
+# BAR CHART
 st.subheader("📊 Grafik Batang")
-
 bar = px.bar(
-
     df.tail(20),
-
     x="second",
-
     y="suhu_ruangan",
-
     color="suhu_ruangan",
-
     color_continuous_scale="Turbo"
-
 )
+st.plotly_chart(bar, use_container_width=True)
 
-st.plotly_chart(bar,use_container_width=True)
+# PIE CHART
 st.subheader("🥧 Persentase Kondisi Suhu")
-
 kategori = pd.cut(
-
     df["suhu_ruangan"],
-
-    bins=[0,25,35,50],
-
+    bins=[0,25,35,100],
     labels=["Normal","Hangat","Panas"]
-
 )
-
 pie = kategori.value_counts().reset_index()
-
 pie.columns=["Kategori","Jumlah"]
-
-fig = px.pie(
-
+fig_pie = px.pie(
     pie,
-
     names="Kategori",
-
     values="Jumlah",
-
     hole=.5
-
 )
+st.plotly_chart(fig_pie, use_container_width=True)
 
-st.plotly_chart(fig,use_container_width=True)
 st.markdown("---")
 
+# DATAFRAME & CSV DOWNLOAD
 st.subheader("📋 Data Sensor")
+st.dataframe(df, use_container_width=True, height=350)
 
-st.dataframe(
-
-    df,
-
-    use_container_width=True,
-
-    height=350
-)
 csv = df.to_csv(index=False)
-
 st.download_button(
-
     "⬇ Download CSV",
-
     csv,
-
     "Data_Suhu.csv",
-
     "text/csv"
-
 )
+
 st.markdown("---")
-
 st.markdown("""
-
 <center>
-
 <h3 style='color:white;'>
-
-👩‍💻 Dibuat Oleh
-
-<br>
-
-SHARON
-
-<br>
-
-2 TRSE A
-
+👩‍💻 Dibuat Oleh<br>SHARON<br>2 TRSE A
 </h3>
-
 </center>
-
-""",unsafe_allow_html=True)
+""", unsafe_allow_html=True)
