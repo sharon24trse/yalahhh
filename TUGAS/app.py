@@ -86,8 +86,7 @@ if not df.empty:
     if "suhu ruangan" in df.columns:
         df.rename(columns={"suhu ruangan": "suhu_ruangan"}, inplace=True)
     
-    # 2. HAPUS DATA SAMPAH (Jika ada data uji coba bernilai ratusan derajat/0 yang merusak statistik)
-    # Kita hanya ambil data suhu yang masuk akal (antara 15°C sampai 60°C) sesuai file CSV aslimu
+    # 2. FILTER DATA: Mengamankan data agar hanya menampilkan suhu normal (15°C sampai 60°C)
     df = df[(df["suhu_ruangan"] >= 15) & (df["suhu_ruangan"] <= 60)]
     
     # Jika kolom detiknya hilang, buat otomatis berdasarkan urutan data
@@ -120,7 +119,11 @@ with c4: st.metric("❄ Minimum", f"{mini:.1f} °C" if not pd.isna(mini) else "0
 st.markdown("---")
 
 st.subheader("📡 Status Sensor")
-suhu_sekarang = float(df["suhu_ruangan"].iloc[-1]) if json_data := len(df) > 0 else 25.0
+# Mengambil suhu paling terakhir dengan aman tanpa memicu NameError lagi
+if len(df) > 0:
+    suhu_sekarang = float(df["suhu_ruangan"].iloc[-1])
+else:
+    suhu_sekarang = 25.0
 
 if suhu_sekarang <= 25:
     st.success(f"🟢 NORMAL\n\nSuhu Saat Ini : {suhu_sekarang:.1f} °C")
