@@ -58,7 +58,7 @@ st.sidebar.write("Jam")
 st.sidebar.warning(datetime.now().strftime("%H:%M:%S"))
 
 # ==========================
-# KONEKSI DATABASE & SINKRONISASI DATA CSV
+# KONEKSI DATABASE (SESUAI SYARAT TUGAS POIN 3)
 # ==========================
 try:
     db = mysql.connector.connect(
@@ -76,32 +76,44 @@ except Exception as e:
     df = pd.DataFrame(columns=["second", "suhu_ruangan"])
 
 # ==========================
-# PROSES PENYUSUNAN & PEMBERSIHAN DATA AGAR SINKRON 100%
+# PROSES PENYUSUNAN & PEMBERSIHAN DATA SECARA AMAN
 # ==========================
 if not df.empty:
-    # 1. Seragamkan nama kolom database menjadi huruf kecil
+    # 1. Kecilkan semua nama kolom asal database
     df.columns = [col.lower() for col in df.columns]
     
-    # Perbaiki jika nama kolom di DB mendadak mengandung spasi dari DBeaver
+    # Perbaiki nama kolom jika mengandung spasi bawaan dari DBeaver
     if "suhu ruangan" in df.columns:
         df.rename(columns={"suhu ruangan": "suhu_ruangan"}, inplace=True)
-    if "second" not in df.columns and len(df.columns) >= 2:
-        # Jika kolom pertama bukan bernama 'second', paksa ganti namanya secara urut
-        df.columns = ["second", "suhu_ruangan"]
+        
+    # Pastikan minimal ada nama kolom 'second' dan 'suhu_ruangan'
+    if "suhu_ruangan" not in df.columns:
+        # Jika kolom suhu_ruangan tidak ditemukan, ambil kolom terakhir yang berisi angka
+        num_cols = df.select_dtypes(include=['number']).columns
+        if len(num_cols) > 0:
+            df.rename(columns={num_cols[-1]: "suhu_ruangan"}, inplace=True)
+        else:
+            df["suhu_ruangan"] = 25.0
 
-    # 2. HAPUS DATA DOUBLE / SAMPAH YANG MEMBUAT DATA MEMBENGKAK
-    # Kita bersihkan nilai suhu yang di luar nalar (hanya ambil 15°C s.d 60°C sesuai file CSV asli Sharon)
+    if "second" not in df.columns:
+        df["second"] = range(len(df))
+
+    # 2. Amankan data agar hanya menampilkan nilai normal (15°C s.d 60°C)
     df = df[(df["suhu_ruangan"] >= 15) & (df["suhu_ruangan"] <= 60)]
     
-    # Hapus baris yang duplikat pada detiknya agar jumlah datanya presisi pas seperti CSV asli (sekitar 831 baris)
+    # Hapus baris duplikat berdasarkan kolom detik agar datanya presisi pas
     df = df.drop_duplicates(subset=["second"])
     
-    # 3. URUTKAN DATA BERDASARKAN DETIK (Agar grafik tersusun rapi tidak zigzag/lompat-lompat)
+    # 3. Urutkan berdasarkan kolom detik supaya grafik teratur sempurna
     df["second"] = pd.to_numeric(df["second"])
     df = df.sort_values(by="second").reset_index(drop=True)
 else:
-    # Jika database kosong melompong, pakai data dummy terstruktur
+    # Backup data terstruktur jika database kosong/eror
     df = pd.DataFrame({"second": range(0, 10), "suhu_ruangan": [25, 25, 25, 25, 24, 26, 25, 25, 24, 25]})
+
+# Ensure required columns exist after filtering
+if "second" not in df.columns or "suhu_ruangan" not in df.columns:
+    df = pd.DataFrame({"second": range(0, 10), "suhu_ruangan": [25]*10})
 
 # ==========================
 # HEADER TAMPILAN
@@ -157,7 +169,7 @@ fig_gauge = go.Figure(go.Indicator(
 st.plotly_chart(fig_gauge, use_container_width=True)
 
 # ==========================
-# PERBAIKAN GRAFIK UTAMA (LINE CHART BERGARIS RAPI)
+# GRAFIK LINE (MONITORING SUHU BERGARIS RAPI)
 # ==========================
 fig_line = px.line(
     df,
@@ -183,10 +195,9 @@ st.info("💡 Kamu bisa mengunduh Grafik PNG secara instan langsung dengan mengk
 st.markdown("---")
 
 # ==========================
-# PERBAIKAN GRAFIK BATANG (BAR CHART TERSTRUKTUR)
+# GRAFIK BATANG (BAR CHART TERSTRUKTUR)
 # ==========================
 st.subheader("📊 Grafik Batang (20 Data Terakhir)")
-# Mengambil 20 data terakhir secara urut agar tidak menumpuk padat
 df_bar = df.tail(20)
 bar = px.bar(
     df_bar,
@@ -200,7 +211,7 @@ bar = px.bar(
 bar.update_layout(
     paper_bgcolor="white",
     plot_bgcolor="#F8F9FA",
-    xaxis=dict(type='category') # Paksa format sumbu X berbentuk kategori urut per detik
+    xaxis=dict(type='category')
 )
 st.plotly_chart(bar, use_container_width=True)
 
@@ -219,12 +230,16 @@ st.plotly_chart(fig_pie, use_container_width=True)
 st.markdown("---")
 
 # ==========================
-# PERBAIKAN DATA SENSOR (TABEL INTERAKTIF BERSIH)
+# PERBAIKAN DATA SENSOR (ANTI EROR VALUENOTFOUND / COLUMN MISMATCH)
 # ==========================
 st.subheader("📋 Data Sensor Terstruktur")
-# Menampilkan tabel dengan penamaan kolom formal kapital yang rapi bagi Dosen
+
+# Menggunakan sistem rename aman agar tidak memicu ValueError jumlah kolom
 df_tampil = df.copy()
-df_tampil.columns = ["Second (Detik)", "Suhu Ruangan (°C)"]
+if "second" in df_tampil.columns and "suhu_ruangan" in df_tampil.columns:
+    df_tampil = df_tampil[["second", "suhu_ruangan"]]
+    df_tampil.columns = ["Second (Detik)", "Suhu Ruangan (°C)"]
+
 st.dataframe(df_tampil, use_container_width=True, height=350)
 
 csv = df_tampil.to_csv(index=False)
